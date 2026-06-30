@@ -7,6 +7,7 @@ rem Optional settings:
 rem set PORT=8787
 rem set HOST=0.0.0.0
 rem set ALERT_PERCENT=85
+rem set DISPLAY_MODE=used
 rem set CODEX_LOOKBACK_DAYS=14
 node server.js
 echo.

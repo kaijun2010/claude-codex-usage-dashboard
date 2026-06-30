@@ -11,6 +11,7 @@ The server runs on your own Windows or macOS machine, reads local usage data, an
 ## Features
 
 - Shows Claude Code and Codex usage for the 5-hour and weekly windows.
+- Can display either used percentage or remaining percentage.
 - Reads Claude Code usage through a local `statusLine` cache.
 - Reads Codex usage from the newest local `~/.codex/sessions` `rate_limits` snapshot.
 - Works on a phone or tablet connected to the same Wi-Fi network.
@@ -206,6 +207,7 @@ The macOS LaunchAgent writes logs to:
 | `PORT` | `8787` | Dashboard port |
 | `HOST` | `0.0.0.0` | Allows devices on the same Wi-Fi to connect. Use `127.0.0.1` for local-only preview |
 | `ALERT_PERCENT` | `85` | Usage percentage that turns the dashboard red |
+| `DISPLAY_MODE` | `used` | Display `used` percentage or `remaining` percentage |
 | `CODEX_LOOKBACK_DAYS` | `14` | How many days of Codex sessions to scan |
 | `CLAUDE_USAGE_CACHE` | `~/.claude/usage-cache.json` | Claude usage cache path |
 | `CODEX_SESSIONS_DIR` | `~/.codex/sessions` | Codex sessions path |
@@ -216,14 +218,17 @@ Windows example:
 ```powershell
 $env:PORT="8790"
 $env:HOST="127.0.0.1"
+$env:DISPLAY_MODE="remaining"
 node server.js
 ```
 
 macOS example:
 
 ```bash
-PORT=8790 HOST=127.0.0.1 node server.js
+PORT=8790 HOST=127.0.0.1 DISPLAY_MODE=remaining node server.js
 ```
+
+`DISPLAY_MODE=used` shows how much of the limit has been used. `DISPLAY_MODE=remaining` shows how much is left. The red alert color is still based on used percentage reaching `ALERT_PERCENT`.
 
 ## Network Access
 

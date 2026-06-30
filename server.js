@@ -15,6 +15,9 @@ function envNumber(name, fallback) {
 const PORT = envNumber('PORT', 8787);
 const ALERT_PERCENT = envNumber('ALERT_PERCENT', 85);
 const CODEX_LOOKBACK_DAYS = envNumber('CODEX_LOOKBACK_DAYS', 14);
+const DISPLAY_MODE = ['used', 'remaining'].includes(String(process.env.DISPLAY_MODE || '').toLowerCase())
+  ? String(process.env.DISPLAY_MODE).toLowerCase()
+  : 'used';
 
 const CLAUDE_CACHE = process.env.CLAUDE_USAGE_CACHE
   || path.join(os.homedir(), '.claude', 'usage-cache.json');
@@ -240,6 +243,22 @@ body {
   font-weight: 500;
   white-space: nowrap;
 }
+.mode {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  min-height: 28px;
+  padding: 4px 10px;
+  margin-top: 14px;
+  border: 1px solid var(--track);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: clamp(13px, 2.1vmin, 24px);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
 .metrics {
   flex: 1;
   display: flex;
@@ -316,6 +335,7 @@ body {
       <div class="brand claude">Claude</div>
       <div class="age" id="age_claude">No data</div>
     </div>
+    <div class="mode">${DISPLAY_MODE === 'remaining' ? 'Remaining' : 'Used'}</div>
     <div class="metrics">
       <div class="metric">
         <div class="label">5 hours</div>
@@ -340,6 +360,7 @@ body {
       <div class="brand codex">Codex</div>
       <div class="age" id="age_codex">No data</div>
     </div>
+    <div class="mode">${DISPLAY_MODE === 'remaining' ? 'Remaining' : 'Used'}</div>
     <div class="metrics">
       <div class="metric">
         <div class="label">5 hours</div>
@@ -367,6 +388,7 @@ const COLORS = {
   faint: '#A6A399',
 };
 const ALERT_PERCENT = ${JSON.stringify(ALERT_PERCENT)};
+const DISPLAY_MODE = ${JSON.stringify(DISPLAY_MODE)};
 const $ = (id) => document.getElementById(id);
 
 function resetText(timestamp) {
@@ -405,12 +427,15 @@ function setMetric(prefix, data, baseColor) {
     return;
   }
 
+  const displayValue = DISPLAY_MODE === 'remaining'
+    ? Math.max(0, 100 - data.used)
+    : data.used;
   const color = data.used >= ALERT_PERCENT ? COLORS.alert : baseColor;
-  number.textContent = String(Math.round(data.used));
+  number.textContent = String(Math.round(displayValue));
   number.style.color = color;
   percent.textContent = '%';
   percent.style.color = color;
-  bar.style.width = Math.max(2, Math.min(100, data.used)) + '%';
+  bar.style.width = Math.max(2, Math.min(100, displayValue)) + '%';
   bar.style.background = color;
   reset.textContent = resetText(data.resetAt);
 }
@@ -474,6 +499,7 @@ const server = http.createServer((request, response) => {
       'Cache-Control': 'no-store',
     });
     response.end(JSON.stringify({
+      displayMode: DISPLAY_MODE,
       claude: readClaudeUsage(),
       codex: getCodexUsage(),
     }));
