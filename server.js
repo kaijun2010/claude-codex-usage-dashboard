@@ -22,8 +22,8 @@ const DISPLAY_MODE = ['used', 'remaining'].includes(String(process.env.DISPLAY_M
 
 const CLAUDE_CACHE = process.env.CLAUDE_USAGE_CACHE
   || path.join(os.homedir(), '.claude', 'usage-cache.json');
-const CODEX_SESSIONS = process.env.CODEX_SESSIONS_DIR
-  || path.join(os.homedir(), '.codex', 'sessions');
+const AGY_CACHE = process.env.AGY_USAGE_CACHE
+  || path.join(os.homedir(), '.gemini', 'antigravity-cli', 'cache', 'agy-usage-cache.json');
 
 function readJson(filePath) {
   try {
@@ -41,11 +41,11 @@ function normalizeClaudeWindow(windowData) {
   };
 }
 
-function normalizeCodexWindow(windowData) {
-  if (!windowData || typeof windowData.used_percent !== 'number') return null;
+function normalizeAgyWindow(windowData) {
+  if (!windowData || typeof windowData.remaining_fraction !== 'number') return null;
   return {
-    used: windowData.used_percent,
-    resetAt: windowData.resets_at ? windowData.resets_at * 1000 : null,
+    used: (1 - windowData.remaining_fraction) * 100,
+    resetAt: windowData.reset_time ? new Date(windowData.reset_time).getTime() : null,
   };
 }
 
@@ -62,95 +62,35 @@ function readClaudeUsage() {
   };
 }
 
-function getCodexDayDirectory(date) {
-  return path.join(
-    CODEX_SESSIONS,
-    String(date.getFullYear()),
-    String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0'),
-  );
-}
-
-function readCodexUsage() {
-  if (!fs.existsSync(CODEX_SESSIONS)) {
-    return { fetchedAt: null, five: null, seven: null };
-  }
-
-  const now = new Date();
-  let newest = null;
-
-  for (let dayOffset = 0; dayOffset < CODEX_LOOKBACK_DAYS; dayOffset += 1) {
-    const day = new Date(now.getTime() - dayOffset * 86400000);
-    const dir = getCodexDayDirectory(day);
-    if (!fs.existsSync(dir)) continue;
-
-    let files = [];
-    try {
-      files = fs.readdirSync(dir)
-        .filter((fileName) => fileName.startsWith('rollout-') && fileName.endsWith('.jsonl'));
-    } catch (error) {
-      continue;
-    }
-
-    for (const fileName of files) {
-      const filePath = path.join(dir, fileName);
-      let lines = [];
-      try {
-        lines = fs.readFileSync(filePath, 'utf8').split('\n');
-      } catch (error) {
-        continue;
-      }
-
-      for (const line of lines) {
-        if (!line || !line.includes('token_count')) continue;
-
-        let event = null;
-        try {
-          event = JSON.parse(line);
-        } catch (error) {
-          continue;
-        }
-
-        const payload = event && event.payload;
-        if (!payload || payload.type !== 'token_count' || !payload.rate_limits) continue;
-
-        const timestamp = Date.parse(event.timestamp || 0);
-        if (!timestamp) continue;
-
-        if (!newest || timestamp > newest.timestamp) {
-          newest = { timestamp, rateLimits: payload.rate_limits };
-        }
-      }
-    }
-  }
-
-  if (!newest) {
+function readAgyUsage() {
+  const data = readJson(AGY_CACHE);
+  if (!data || !data.quota) {
     return { fetchedAt: null, five: null, seven: null };
   }
 
   return {
-    fetchedAt: newest.timestamp,
-    five: normalizeCodexWindow(newest.rateLimits.primary),
-    seven: normalizeCodexWindow(newest.rateLimits.secondary),
+    fetchedAt: data.fetchedAt || null,
+    five: normalizeAgyWindow(data.quota['gemini-5h']),
+    seven: normalizeAgyWindow(data.quota['gemini-weekly']),
   };
 }
 
-let codexCache = { fetchedAt: 0, data: null };
+let agyCache = { fetchedAt: 0, data: null };
 
-function getCodexUsage() {
+function getAgyUsage() {
   const now = Date.now();
-  if (codexCache.data && now - codexCache.fetchedAt < 8000) {
-    return codexCache.data;
+  if (agyCache.data && now - agyCache.fetchedAt < 2000) {
+    return agyCache.data;
   }
 
   let data = null;
   try {
-    data = readCodexUsage();
+    data = readAgyUsage();
   } catch (error) {
     data = { fetchedAt: null, five: null, seven: null };
   }
 
-  codexCache = { fetchedAt: now, data };
+  agyCache = { fetchedAt: now, data };
   return data;
 }
 
@@ -267,7 +207,7 @@ function koboCard(name, usage, mode) {
 function koboPageHtml(requestUrl) {
   const mode = getDisplayMode(requestUrl);
   const claude = readClaudeUsage();
-  const codex = getCodexUsage();
+  const agy = getAgyUsage();
   const generatedAt = new Date().toLocaleString('en-US', { hour12: false });
 
   return `<!doctype html>
@@ -399,7 +339,7 @@ th {
     <p class="sub">KOBO / e-ink mode - showing ${formatModeLabel(mode)} - refresh ${Math.max(15, Math.round(KOBO_REFRESH_SECONDS))}s</p>
   </div>
   ${koboCard('Claude', claude, mode)}
-  ${koboCard('Codex', codex, mode)}
+  ${koboCard('AGY', agy, mode)}
   <div class="footer">
     <p>Generated ${generatedAt}. Short URLs: <strong>/k</strong> for remaining, <strong>/u</strong> for used.</p>
     <p>Long URLs also work: <strong>/kobo?mode=remaining</strong> and <strong>/kobo?mode=used</strong>.</p>
@@ -422,7 +362,7 @@ function pageHtml() {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600;800&display=swap" rel="stylesheet">
-<title>Claude / Codex Usage Dashboard</title>
+<title>Claude / AGY Usage Dashboard</title>
 <style>
 :root {
   --bg: #EBE6D9;
@@ -432,7 +372,7 @@ function pageHtml() {
   --faint: #A6A399;
   --track: #EAE6DC;
   --claude: #BE7457;
-  --codex: #767FC6;
+  --agy: #4285F4;
   --alert: #B23A2E;
 }
 * {
@@ -481,7 +421,7 @@ body {
   white-space: nowrap;
 }
 .brand.claude { color: var(--claude); }
-.brand.codex { color: var(--codex); }
+.brand.agy { color: var(--agy); }
 .age {
   color: var(--faint);
   font-size: clamp(16px, 3.2vmin, 36px);
@@ -600,35 +540,35 @@ body {
       </div>
     </div>
   </section>
-  <section class="card" aria-label="Codex usage">
+  <section class="card" aria-label="AGY usage">
     <div class="head">
-      <div class="brand codex">Codex</div>
-      <div class="age" id="age_codex">No data</div>
+      <div class="brand agy">AGY</div>
+      <div class="age" id="age_agy">No data</div>
     </div>
     <div class="mode">${DISPLAY_MODE === 'remaining' ? 'Remaining' : 'Used'}</div>
     <div class="metrics">
       <div class="metric">
         <div class="label">5 hours</div>
         <div class="numrow">
-          <div class="big"><span id="num_codex_five">--</span><span class="percent" id="pct_codex_five"></span></div>
-          <div class="reset" id="reset_codex_five"></div>
+          <div class="big"><span id="num_agy_five">--</span><span class="percent" id="pct_agy_five"></span></div>
+          <div class="reset" id="reset_agy_five"></div>
         </div>
-        <div class="bar"><i id="bar_codex_five"></i></div>
+        <div class="bar"><i id="bar_agy_five"></i></div>
       </div>
       <div class="metric">
         <div class="label">Weekly</div>
         <div class="numrow">
-          <div class="big"><span id="num_codex_seven">--</span><span class="percent" id="pct_codex_seven"></span></div>
-          <div class="reset" id="reset_codex_seven"></div>
+          <div class="big"><span id="num_agy_seven">--</span><span class="percent" id="pct_agy_seven"></span></div>
+          <div class="reset" id="reset_agy_seven"></div>
         </div>
-        <div class="bar"><i id="bar_codex_seven"></i></div>
+        <div class="bar"><i id="bar_agy_seven"></i></div>
       </div>
     </div>
   </section>
 <script>
 const COLORS = {
   claude: '#BE7457',
-  codex: '#767FC6',
+  agy: '#4285F4',
   alert: '#B23A2E',
   faint: '#A6A399',
 };
@@ -690,17 +630,17 @@ async function refreshUsage() {
     const response = await fetch('/api/usage', { cache: 'no-store' });
     const usage = await response.json();
     const claude = usage.claude || {};
-    const codex = usage.codex || {};
+    const agy = usage.agy || {};
 
     setMetric('claude_five', claude.five, COLORS.claude);
     setMetric('claude_seven', claude.seven, COLORS.claude);
-    setMetric('codex_five', codex.five, COLORS.codex);
-    setMetric('codex_seven', codex.seven, COLORS.codex);
+    setMetric('agy_five', agy.five, COLORS.agy);
+    setMetric('agy_seven', agy.seven, COLORS.agy);
     $('age_claude').textContent = ageText(claude.fetchedAt);
-    $('age_codex').textContent = ageText(codex.fetchedAt);
+    $('age_agy').textContent = ageText(agy.fetchedAt);
   } catch (error) {
     $('age_claude').textContent = 'Offline';
-    $('age_codex').textContent = 'Offline';
+    $('age_agy').textContent = 'Offline';
   }
 }
 
@@ -757,7 +697,7 @@ const server = http.createServer((request, response) => {
     response.end(JSON.stringify({
       displayMode: DISPLAY_MODE,
       claude: readClaudeUsage(),
-      codex: getCodexUsage(),
+      agy: getAgyUsage(),
     }));
     return;
   }
@@ -771,7 +711,7 @@ const server = http.createServer((request, response) => {
 
 server.listen(PORT, HOST, () => {
   const visibleHost = HOST === '0.0.0.0' ? getLanAddress() : HOST;
-  console.log('Claude / Codex usage dashboard');
+  console.log('Claude / AGY usage dashboard');
   console.log('Local:  http://localhost:' + PORT);
   console.log('Device: http://' + visibleHost + ':' + PORT);
   console.log('KOBO:   http://' + visibleHost + ':' + PORT + '/k');
